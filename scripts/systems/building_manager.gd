@@ -10,6 +10,8 @@ const Vis = preload("res://scripts/core/visuals.gd")
 
 const ROAD_CELL := 2.0
 const WALKABLE := ["farm", "park", "animal_pen", "well", "street_light"]
+const PROJECT_SEARCH_MAX_RADIUS := 185.0
+const PROJECT_SEARCH_RANDOM_TRIES := 80
 
 var buildings: Dictionary = {}   # id -> Building
 var sites: Dictionary = {}       # id -> ConstructionSite
@@ -546,36 +548,67 @@ func _plan_road() -> void:
 func _find_spot(center: Vector3, btype: String) -> Vector3:
 	var def := BuildingDB.get_def(btype)
 	var sz: Vector2 = def["size"]
-	var spread := minf(20.0 + buildings.size() * 1.5, 60.0)
-	for i in range(40):
+	var step: float = maxf(maxf(sz.x, sz.y) + 6.0, 10.0)
+	var spread := minf(24.0 + buildings.size() * 1.5 + sites.size() * 2.0, 75.0)
+	for i in range(PROJECT_SEARCH_RANDOM_TRIES):
 		var ang := Rng.randf() * TAU
 		var dist := Rng.randf_range(8.0, spread)
 		var pos: Vector3 = G.world.clamp_pos(center + Vector3(cos(ang) * dist, 0, sin(ang) * dist))
-		if G.world.in_water(pos) or G.world.in_zone(pos, "predator") or G.world.in_zone(pos, "restricted"):
-			continue
-		# never build directly over water access or wild food
-		var margin := maxf(sz.x, sz.y) * 0.5 + 1.5
-		var wnear: Dictionary = G.world.nearest_water(pos, margin + 0.01)
-		if wnear["ok"]:
-			continue
-		var rnear: Dictionary = G.world.nearest_resource(pos, margin)
-		if not rnear.is_empty():
-			continue
-		var clear := true
-		for bid in grid_b.query_ids(pos, 14.0):
-			var other = buildings.get(bid)
-			if other != null and pos.distance_to(other.position) < (sz.x + other.def["size"].x) * 0.5 + 3.5:
-				clear = false
-				break
-		if not clear:
-			continue
-		for s in sites.values():
-			if pos.distance_to(s.position) < 8.0:
-				clear = false
-				break
-		if clear:
+		if _spot_is_clear(pos, sz):
 			return pos
-	return Vector3.INF
+	var radius := step
+	while radius <= PROJECT_SEARCH_MAX_RADIUS:
+		var steps := maxi(16, int(ceil(TAU * radius / step)))
+		var offset := fposmod(float(next_id + buildings.size()) * 0.61803398875, 1.0) * TAU
+		for i in range(steps):
+			var ang := offset + TAU * float(i) / float(steps)
+			var pos: Vector3 = G.world.clamp_pos(center + Vector3(cos(ang) * radius, 0, sin(ang) * radius))
+			if _spot_is_clear(pos, sz):
+				return pos
+		radius += step
+	return _find_nearest_map_spot(center, sz, step)
+
+func _find_nearest_map_spot(center: Vector3, sz: Vector2, step: float) -> Vector3:
+	var limit := 190.0
+	var best := Vector3.INF
+	var best_d := INF
+	var cells := int(floor((limit * 2.0) / step))
+	for xi in range(cells + 1):
+		for zi in range(cells + 1):
+			var pos := Vector3(-limit + float(xi) * step, 0, -limit + float(zi) * step)
+			if not _spot_is_clear(pos, sz):
+				continue
+			var d := center.distance_squared_to(pos)
+			if d < best_d:
+				best_d = d
+				best = pos
+	return best
+
+func _spot_is_clear(pos: Vector3, sz: Vector2) -> bool:
+	if G.world.in_water(pos) or G.world.in_zone(pos, "predator") or G.world.in_zone(pos, "restricted"):
+		return false
+	# Never build directly over water access or wild food.
+	var margin := maxf(sz.x, sz.y) * 0.5 + 1.5
+	var wnear: Dictionary = G.world.nearest_water(pos, margin + 0.01)
+	if wnear["ok"]:
+		return false
+	var rnear: Dictionary = G.world.nearest_resource(pos, margin)
+	if not rnear.is_empty():
+		return false
+	var query_radius := maxf(14.0, maxf(sz.x, sz.y) + 20.0)
+	for bid in grid_b.query_ids(pos, query_radius):
+		var other = buildings.get(bid)
+		if other != null and _footprints_overlap(pos, sz, other.position, other.def["size"], 3.5):
+			return false
+	for s in sites.values():
+		if _footprints_overlap(pos, sz, s.position, s.def["size"], 3.0):
+			return false
+	return true
+
+func _footprints_overlap(a_pos: Vector3, a_size: Vector2, b_pos: Vector3, b_size: Vector2, clearance: float) -> bool:
+	var x_gap: float = (a_size.x + b_size.x) * 0.5 + clearance
+	var z_gap: float = (a_size.y + b_size.y) * 0.5 + clearance
+	return absf(a_pos.x - b_pos.x) < x_gap and absf(a_pos.z - b_pos.z) < z_gap
 
 # ---------------- Persistence ----------------
 
