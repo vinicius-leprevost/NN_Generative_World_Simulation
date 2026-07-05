@@ -1,0 +1,29 @@
+; Engine configuration file.
+; Genesis Biosphere Simulator — Godot 4.4.1, Vulkan Forward+
+config_version=5
+
+[application]
+
+config/name="Genesis Biosphere Simulator"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.4", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+
+Params="*res://scripts/core/sim_params.gd"
+Rng="*res://scripts/core/rng_service.gd"
+Names="*res://scripts/core/names_db.gd"
+G="*res://scripts/core/globals.gd"
+Events="*res://scripts/core/event_log.gd"
+SaveMgr="*res://scripts/core/save_load.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+anti_aliasing/quality/msaa_3d=1
