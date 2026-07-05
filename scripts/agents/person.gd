@@ -47,6 +47,8 @@ var memory := {"food": [], "water": [], "danger": []}
 var lexicon: Dictionary = {}         # symbol -> {"m": meaning_id, "c": confidence}
 var car_id := -1
 var owned_animals: Array = []
+var pocket_food := 0.0      # personal supplies carried from markets/home
+var pocket_water := 0.0
 var prison_until := -1.0
 var crimes_committed := 0
 var action := "idle"
@@ -167,6 +169,7 @@ func tick(dt: float) -> void:
 	if not alive:
 		return
 	_needs(dt)
+	_consume_pocket()
 	_aging(dt)
 	if not alive:
 		return
@@ -240,6 +243,23 @@ func _needs(dt: float) -> void:
 		elif sick:
 			cause = "disease"
 		die(cause)
+
+func pocket_food_max() -> float:
+	return Params.get_p("eco.pocket_food")
+
+func pocket_water_max() -> float:
+	return Params.get_p("eco.pocket_water")
+
+func _consume_pocket() -> void:
+	# snack from carried supplies before needs become emergencies
+	if hunger >= 55.0 and pocket_food > 0.0:
+		var eat: float = minf(pocket_food, (hunger - 20.0) / 1.3)
+		pocket_food -= eat
+		hunger = maxf(hunger - eat * 1.3, 0.0)
+	if thirst >= 55.0 and pocket_water > 0.0:
+		var drink: float = minf(pocket_water, thirst - 15.0)
+		pocket_water -= drink
+		thirst = maxf(thirst - drink, 0.0)
 
 func _near_hospital() -> bool:
 	var h = G.buildings.nearest("hospital", position)
@@ -563,10 +583,22 @@ func _set_wander_target() -> void:
 	_set_point(position + dir * dist)
 
 func _target_food(ctx: Dictionary) -> void:
-	# 1) home stock  2) visible resource  3) memory  4) buy  5) explore
+	# pocket snacks are automatic; reaching here means the pocket is empty.
+	# priority: home pantry > buy at a stocked market > communal stock >
+	# wild foraging (survival fallback) > memory > wander
 	var home = G.buildings.get_building(home_id)
 	if home != null and home.stock.get("food", 0.0) >= 1.0:
 		_set_entity("building", home.id, home.position)
+		return
+	var store = ctx["store"]
+	if store != null and store.stock.get("food", 0.0) >= 4.0 \
+			and money >= G.economy.food_unit_price() * 4.0:
+		action = "buy_food"
+		_set_entity("building", store.id, store.position)
+		return
+	var stocked = G.buildings.nearest_stocked_food(position)
+	if stocked != null:
+		_set_entity("building", stocked.id, stocked.position)
 		return
 	var target_res: Dictionary = G.world.pick_food_target(position, 70.0)
 	if not target_res.is_empty():
@@ -575,14 +607,6 @@ func _target_food(ctx: Dictionary) -> void:
 	var mem = recall_nearest("food")
 	if mem != null:
 		_set_point(mem)
-		return
-	var stocked = G.buildings.nearest_stocked_food(position)
-	if stocked != null:
-		_set_entity("building", stocked.id, stocked.position)
-		return
-	if ctx["store"] != null and money >= Params.get_p("eco.food_price"):
-		action = "buy_food"
-		_set_entity("building", ctx["store"].id, ctx["store"].position)
 		return
 	try_speak("hungry")
 	_set_wander_target()
@@ -681,7 +705,7 @@ func base_speed() -> float:
 	s *= 0.75 + 0.25 * (energy / 100.0)
 	s *= G.weather.move_mult()
 	s *= 0.7 + 0.3 * Params.get_p("nn.move_strength")
-	if G.buildings.road_at(position):
+	if G.buildings.road_near(position):
 		s *= 1.3
 		if car_id >= 0:
 			s *= 2.4
@@ -758,6 +782,8 @@ func _do_action(dt: float) -> void:
 				action = "idle"
 				return
 			thirst = maxf(thirst - dt * 35.0 * G.weather.water_mult(), 0.0)
+			# refill the canteen while at a water source
+			pocket_water = minf(pocket_water + dt * 25.0, pocket_water_max())
 			if thirst <= 12.0:
 				remember("water", position)
 				try_speak("water_found")
@@ -795,7 +821,7 @@ func _do_action(dt: float) -> void:
 			action = "idle"
 			brain.reinforce("flee", 0.3)
 		"buy_food":
-			if G.economy.buy_food(self):
+			if G.economy.buy_supplies(self):
 				brain.reinforce("buy_food", 0.4)
 			action = "idle"
 		"buy_car":
@@ -838,6 +864,11 @@ func _act_eat(dt: float) -> void:
 			var got2: float = minf(dt * 16.0, b.stock["food"])
 			b.stock["food"] -= got2
 			hunger = maxf(hunger - got2 * 1.3, 0.0)
+			if b.id == home_id and pocket_food < pocket_food_max() and b.stock["food"] > 0.0:
+				# pack some pantry food for the road
+				var pack: float = minf(minf(dt * 8.0, b.stock["food"]), pocket_food_max() - pocket_food)
+				b.stock["food"] -= pack
+				pocket_food += pack
 			if hunger <= 12.0:
 				brain.reinforce("seek_food", 0.5)
 				action = "idle"
@@ -1150,6 +1181,7 @@ func serialize() -> Dictionary:
 		"memory": memory, "lexicon": lexicon, "car_id": car_id,
 		"owned_animals": owned_animals, "prison_until": prison_until,
 		"crimes": crimes_committed, "x": position.x, "z": position.z,
+		"pocket_food": pocket_food, "pocket_water": pocket_water,
 		"brain": brain.to_dict(),
 	}
 
@@ -1200,6 +1232,8 @@ func deserialize(d: Dictionary) -> void:
 	owned_animals = _int_array(d.get("owned_animals", []))
 	prison_until = float(d.get("prison_until", -1.0))
 	crimes_committed = int(d.get("crimes", 0))
+	pocket_food = float(d.get("pocket_food", 0.0))
+	pocket_water = float(d.get("pocket_water", 0.0))
 	position = Vector3(float(d["x"]), 0, float(d["z"]))
 	brain = PersonBrain.new()
 	brain.from_dict(d.get("brain", {}))

@@ -407,6 +407,8 @@ func _refresh_inspector() -> void:
 		t += "action: [color=#ffd870]%s[/color]  emotion: %s\n" % [p.action, p.emotion]
 		t += "health %.0f · hunger %.0f · thirst %.0f · energy %.0f\n" % [p.health, p.hunger, p.thirst, p.energy]
 		t += "money %.1f · education %.0f · crimes %d\n" % [p.money, p.education, p.crimes_committed]
+		t += "pocket: food %.0f/%.0f · water %.0f/%.0f\n" % [p.pocket_food, p.pocket_food_max(),
+			p.pocket_water, p.pocket_water_max()]
 		t += "job: %s · home: %s · car: %s\n" % [p.job_type if p.job_type != "" else "none",
 			str(p.home_id) if p.home_id >= 0 else "none", "yes" if p.car_id >= 0 else "no"]
 		t += "partner: %s · children: %d · family: %s\n" % [_pname(p.partner_id), p.child_ids.size(),

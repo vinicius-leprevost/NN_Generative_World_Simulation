@@ -50,13 +50,15 @@ func tick(_dt: float) -> void:
 		var node: Node3D = car["node"]
 		if owner == null or not owner.alive:
 			continue  # car stays parked where it is
-		if not owner.arrived and G.buildings.road_at(owner.position):
-			# owner is driving
-			node.position = owner.position + Vector3(0, 0, 0)
+		# road_near (not exact-cell road_at) — owners rarely stand on the
+		# precise 2m road cell, which left cars permanently parked
+		if not owner.arrived and G.buildings.road_near(owner.position):
+			# owner is driving: the car carries them
+			node.position = Vector3(owner.position.x, 0.0, owner.position.z)
 			node.rotation.y = owner.rotation.y
-		else:
+		elif owner.arrived:
 			var home = G.buildings.get_building(owner.home_id)
-			if home != null and node.position.distance_to(home.position) > 6.0 and owner.arrived:
+			if home != null and node.position.distance_to(home.position) > 8.0:
 				node.position = home.position + Vector3(home.def["size"].x * 0.5 + 1.5, 0, 0)
 
 func clear_all() -> void:

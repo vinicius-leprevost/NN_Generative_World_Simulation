@@ -42,20 +42,46 @@ func pay_wage(p, dt: float) -> void:
 	treasury += tax
 	tax_collected += tax
 
-func buy_food(p) -> bool:
+func food_unit_price() -> float:
+	# eco.food_price buys a ~10-unit meal bundle
+	return price("food") / 10.0
+
+func water_unit_price() -> float:
+	return price("food") / 20.0
+
+func buy_supplies(p) -> bool:
+	# fill the buyer's pockets with food and water at a store/market
 	var b = G.buildings.get_building(p.target_id)
 	if b == null or b.def.get("provides", "") != "food_store":
 		b = G.buildings.nearest_provider("food_store", p.position)
-	if b == null or b.stock.get("food", 0.0) < 1.0:
+	if b == null:
 		return false
-	var cost := price("food")
-	if p.money < cost:
-		return false
-	p.money -= cost
-	absorb(cost * 0.4)
-	b.stock["food"] -= 1.0
-	p.hunger = maxf(p.hunger - 38.0, 0.0)
-	return true
+	var bought := false
+	var fprice := food_unit_price()
+	var want_f: float = minf(p.pocket_food_max() - p.pocket_food, b.stock.get("food", 0.0))
+	if fprice > 0.0:
+		want_f = minf(want_f, p.money / fprice)
+	if want_f >= 1.0:
+		b.stock["food"] -= want_f
+		p.pocket_food += want_f
+		p.money -= want_f * fprice
+		absorb(want_f * fprice * 0.4)
+		bought = true
+	var wprice := water_unit_price()
+	var want_w: float = minf(p.pocket_water_max() - p.pocket_water, b.stock.get("water", 0.0))
+	if wprice > 0.0:
+		want_w = minf(want_w, p.money / wprice)
+	if want_w >= 1.0:
+		b.stock["water"] = b.stock.get("water", 0.0) - want_w
+		p.pocket_water += want_w
+		p.money -= want_w * wprice
+		absorb(want_w * wprice * 0.4)
+		bought = true
+	return bought
+
+func buy_food(p) -> bool:
+	# legacy entry point; purchases now stock the pocket
+	return buy_supplies(p)
 
 func absorb(amount: float) -> void:
 	# a share of every purchase flows back to public funds

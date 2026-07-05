@@ -117,6 +117,8 @@ func _define_all() -> void:
 	_d("eco.poverty_pressure", "Poverty Pressure", "Economy", 0.0, 3.0, 1.0)
 	_d("eco.inequality", "Wealth Inequality Mult", "Economy", 0.2, 3.0, 1.0)
 	_d("eco.market_rand", "Market Randomness", "Economy", 0.0, 1.0, 0.2)
+	_d("eco.pocket_food", "Pocket Food Capacity", "Economy", 10.0, 200.0, 60.0, 5.0)
+	_d("eco.pocket_water", "Pocket Water Capacity", "Economy", 10.0, 200.0, 60.0, 5.0)
 	# ---------------- Society ----------------
 	_d("soc.group_rate", "Group Formation Rate", "Society", 0.0, 3.0, 1.0)
 	_d("soc.political_rate", "Political Formation Rate", "Society", 0.0, 3.0, 1.0)

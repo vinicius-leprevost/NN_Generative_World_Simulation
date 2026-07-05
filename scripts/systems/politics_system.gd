@@ -252,6 +252,7 @@ func _analyze_world() -> Dictionary:
 	_add_jobs_candidate(candidates, working_adults, employed, fallback)
 	_add_food_candidate(candidates, avg_hunger, stored_food, pop, fallback)
 	_add_store_candidate(candidates, stored_food, pop, fallback)
+	_add_processing_candidate(candidates, pop, fallback)
 	_add_crime_candidate(candidates, pop, fallback)
 	_add_prison_candidate(candidates, pop, fallback)
 	_add_power_candidate(candidates, pop, fallback)
@@ -344,6 +345,21 @@ func _add_store_candidate(out: Array, stored_food: float, pop: int, fallback: Ve
 	var btype: String = "market" if pop > 250 else "store"
 	_add_candidate(out, "Food distribution", 1.1 + float(pop) / 500.0, btype, fallback,
 		"Stored food exists, but stores/markets are below demand")
+
+func _add_processing_candidate(out: Array, pop: int, fallback: Vector3) -> void:
+	# farm -> food processing -> market supply chain
+	if G.buildings.planned_count("food_processing") >= int(pop / 60) + 1:
+		return
+	if G.buildings.planned_count("farm") == 0:
+		return
+	if G.buildings.planned_count("store") + G.buildings.planned_count("market") == 0:
+		return
+	var raw := 0.0
+	for b in G.buildings.list_type("farm"):
+		raw += b.stock.get("food", 0.0)
+	var score: float = 1.05 + minf(raw / 200.0, 1.0)
+	_add_candidate(out, "Food processing", score, "food_processing", fallback,
+		"Farms hold %.0f raw food awaiting processing" % raw)
 
 func _add_crime_candidate(out: Array, pop: int, fallback: Vector3) -> void:
 	var desired: int = maxi(1, int(pop / 300) + 1)

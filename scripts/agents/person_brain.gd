@@ -83,8 +83,15 @@ func decide(p) -> void:
 			u["hunt"] = w["hunt"] * hunger_n * (0.8 + p.skills.get("hunting", 0.0) + p.traits["risk"] * 0.4)
 		if p.money >= Params.get_p("eco.car_price") and p.car_id < 0 and G.buildings.has_roads():
 			u["buy_car"] = w["buy_car"] * 0.9 * (1.0 + p.traits["ambition"])
-	if hunger_n > 0.4 and p.money >= Params.get_p("eco.food_price") and ctx["store"] != null:
-		u["buy_food"] = w["buy_food"] * hunger_n * 2.2
+	# shopping: restock the pocket at a market — urgent when hungry with an
+	# empty pocket, routine errand when supplies merely run low
+	if ctx["store"] != null and ctx["store"].stock.get("food", 0.0) >= 4.0 \
+			and p.money >= G.economy.food_unit_price() * 4.0:
+		var pocket_gap: float = 1.0 - clampf(p.pocket_food / maxf(p.pocket_food_max(), 1.0), 0.0, 1.0)
+		var shop_drive: float = pocket_gap * 0.85
+		if p.pocket_food <= 0.0:
+			shop_drive += hunger_n * 2.2
+		u["buy_food"] = w["buy_food"] * shop_drive
 
 	# --- social / family ---
 	var social_w := Params.get_p("nn.social_w")

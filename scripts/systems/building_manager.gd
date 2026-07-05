@@ -270,6 +270,15 @@ func road_key(pos: Vector3) -> Vector2i:
 func road_at(pos: Vector3) -> bool:
 	return roads.has(road_key(pos))
 
+func road_near(pos: Vector3) -> bool:
+	# within one road cell (~2m) — forgiving enough for driving/walking along roads
+	var k := road_key(pos)
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			if roads.has(Vector2i(k.x + dx, k.y + dz)):
+				return true
+	return false
+
 func has_roads() -> bool:
 	return not roads.is_empty()
 
@@ -400,6 +409,7 @@ func _production(dt: float) -> void:
 		return
 	var pdt := _prod_timer
 	_prod_timer = 0.0
+	var has_processing := count("food_processing") > 0
 	for b in buildings.values():
 		match b.def.get("provides", ""):
 			"food_production":
@@ -411,16 +421,35 @@ func _production(dt: float) -> void:
 						water_ok = 1.0 if (w["ok"] and w["dist"] < 60.0) else 0.25
 					b.stock["food"] += farmers * 0.8 * pdt * G.weather.farm_mult() \
 						* Params.get_p("world.fertility") * water_ok
-			"food_store":
-				# shop workers restock from farms/warehouses
-				if b.present_workers() > 0 and b.stock["food"] < 40.0:
+			"food_processing":
+				# pull raw harvest from farms and refine it (adds value)
+				var hands: int = b.present_workers()
+				if hands > 0:
 					for src in buildings.values():
-						var sp: String = src.def.get("provides", "")
-						if (sp == "food_production" or sp == "storage") and src.stock["food"] > 5.0:
-							var moved: float = minf(0.5 * pdt, src.stock["food"] - 5.0)
+						if src.def.get("provides", "") == "food_production" and src.stock["food"] > 5.0:
+							var moved: float = minf(0.6 * hands * pdt, src.stock["food"] - 5.0)
 							src.stock["food"] -= moved
-							b.stock["food"] += moved
+							b.stock["food"] += moved * 1.2
 							break
+			"food_store":
+				if b.present_workers() > 0:
+					# stores restock processed food; raw farm food only while
+					# no food-processing industry exists yet
+					if b.stock["food"] < 40.0:
+						for src in buildings.values():
+							var sp: String = src.def.get("provides", "")
+							var ok_source: bool = sp == "food_processing" or sp == "storage" \
+								or (sp == "food_production" and not has_processing)
+							if ok_source and src.stock["food"] > 5.0:
+								var moved: float = minf(0.5 * pdt, src.stock["food"] - 5.0)
+								src.stock["food"] -= moved
+								b.stock["food"] += moved
+								break
+					# bottled water: fast with wells/storage, a trickle without
+					if b.stock.get("water", 0.0) < 50.0:
+						var infra: int = count("well") + count("water_storage")
+						b.stock["water"] = b.stock.get("water", 0.0) \
+							+ (0.8 if infra > 0 else 0.15) * pdt
 
 func _maintenance(dt: float) -> void:
 	var decay := Params.get_p("con.maintenance") * dt * 0.008
@@ -515,6 +544,9 @@ func _society_planner() -> void:
 		choice = "prison"
 	elif pop > 14 and planned_count("farm") > 0 and planned_count("store") + planned_count("market") == 0:
 		choice = "store"
+	elif pop > 12 and planned_count("food_processing") == 0 and planned_count("farm") > 0 \
+			and planned_count("store") + planned_count("market") > 0:
+		choice = "food_processing"
 	elif new_pred_kills > 2 and planned_count("watchtower") < 2:
 		choice = "watchtower"
 	elif not G.animals.list_livestock().is_empty() and planned_count("animal_pen") + planned_count("barn") == 0:
