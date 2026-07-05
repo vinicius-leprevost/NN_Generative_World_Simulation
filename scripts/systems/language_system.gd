@@ -64,6 +64,15 @@ func new_dialect(parent := -1) -> int:
 		Events.add("language", "A new dialect formed (%s)" % d["name"])
 	return id
 
+func release_dialect(did: int) -> void:
+	# drop a dialect once no group speaks it (called when groups dissolve)
+	if did < 0 or did == base_dialect or not dialects.has(did):
+		return
+	for g in G.groups.groups.values():
+		if int(g.get("dialect", -1)) == did:
+			return
+	dialects.erase(did)
+
 func dialect_of(p) -> int:
 	for gid in p.group_ids:
 		var g = G.groups.get_group(gid)
@@ -149,14 +158,16 @@ func process_hearing(listener, evt: Dictionary) -> void:
 			listener.lexicon[symbol] = {"m": meaning, "c": 0.3}
 			stats["learned"] += 1
 	if understood:
-		stats["success"] += 1
-		evt["ok"] += 1
 		listener.react_to_meaning(reacted_meaning, evt)
-		# shared-language convergence: adopted words spread between dialects
-		if Rng.chance(Params.get_p("aud.shared_lang_speed") * 0.02):
-			var did := dialect_of(listener)
-			if did != int(evt["dialect"]) and dialects.has(did):
-				dialects[did]["symbols"][meaning] = symbol
+		if reacted_meaning == meaning:
+			# only genuine comprehension counts as success (miscomm already tallied)
+			stats["success"] += 1
+			evt["ok"] += 1
+			# shared-language convergence: adopted words spread between dialects
+			if Rng.chance(Params.get_p("aud.shared_lang_speed") * 0.02):
+				var did := dialect_of(listener)
+				if did != int(evt["dialect"]) and dialects.has(did):
+					dialects[did]["symbols"][meaning] = symbol
 	else:
 		stats["fail"] += 1
 		evt["fail"] += 1

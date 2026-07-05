@@ -439,12 +439,17 @@ func _update_street_lights() -> void:
 	if lights.is_empty():
 		return
 	var campos: Vector3 = G.cam.camera.global_position if G.cam != null else Vector3.ZERO
-	lights.sort_custom(func(a, b): return a.position.distance_to(campos) < b.position.distance_to(campos))
+	# budget applies to POWERED lights only — dark poles must not eat slots
+	var powered: Array = lights.filter(func(l): return l.powered)
+	powered.sort_custom(func(a, b): return a.position.distance_to(campos) < b.position.distance_to(campos))
 	var budget: int = G.perf["max_lights"]
-	for i in range(lights.size()):
-		var l = lights[i]
+	for l in lights:
 		if l.light != null:
-			l.light.visible = night and l.powered and i < budget
+			l.light.visible = false
+	for i in range(mini(budget, powered.size())):
+		var l = powered[i]
+		if l.light != null:
+			l.light.visible = night
 
 # ---------------- Society construction planner ----------------
 

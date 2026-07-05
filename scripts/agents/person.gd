@@ -344,11 +344,19 @@ func perceive() -> Dictionary:
 				if def.get("tame", false) and an.domestication < 0.75:
 					ctx["tameable"] = an
 	# remembered danger zones
+	var mem_threat = null
+	var mem_threat_d := 1e9
 	for dpos in memory["danger"]:
 		var d := position.distance_to(Vector3(dpos[0], 0, dpos[1]))
 		if d < 20.0:
 			ctx["danger"] += (1.0 - d / 20.0) * 0.3
+			if d < mem_threat_d:
+				mem_threat_d = d
+				mem_threat = Vector3(dpos[0], 0, dpos[1])
 	ctx["danger"] += G.crime.danger_at(position) * 0.3
+	# without a live predator, flee away from the remembered danger spot
+	if ctx["predators"].is_empty() and mem_threat != null:
+		ctx["threat_pos"] = mem_threat
 	ctx["food_res"] = G.world.nearest_resource(position, 45.0)
 	ctx["water"] = G.world.nearest_water(position, 60.0)
 	ctx["sites"] = G.buildings.sites_needing_builders()
@@ -424,7 +432,7 @@ func start_action(a: String, ctx: Dictionary) -> void:
 		"rest", "go_home":
 			var home = G.buildings.get_building(home_id)
 			if home != null:
-				_set_point(home.position)
+				_set_entity("building", home.id, home.position)
 			elif a == "go_home":
 				_claim_home()
 			else:
@@ -439,7 +447,7 @@ func start_action(a: String, ctx: Dictionary) -> void:
 		"work":
 			var wb = G.buildings.get_building(job_building)
 			if wb != null:
-				_set_point(wb.position + Vector3(Rng.randf_range(-2, 2), 0, Rng.randf_range(-2, 2)))
+				_set_entity("building", wb.id, wb.position)
 			else:
 				job_type = ""
 				job_building = -1
@@ -456,7 +464,7 @@ func start_action(a: String, ctx: Dictionary) -> void:
 				action = "work"
 				var wb2 = G.buildings.get_building(job_building)
 				if wb2 != null:
-					_set_point(wb2.position)
+					_set_entity("building", wb2.id, wb2.position)
 				Events.add("economy", "%s got a job as %s" % [pname, job_type])
 				_update_color()
 		"build":
@@ -622,7 +630,7 @@ func _redirect_from_build_site() -> void:
 		var wb = G.buildings.get_building(job_building)
 		if wb != null:
 			action = "work"
-			_set_point(wb.position + Vector3(Rng.randf_range(-2, 2), 0, Rng.randf_range(-2, 2)))
+			_set_entity("building", wb.id, wb.position)
 			return
 	action = "idle"
 
@@ -655,7 +663,7 @@ func _claim_home() -> void:
 	if b != null:
 		home_id = b.id
 		b.residents.append(id)
-		_set_point(b.position)
+		_set_entity("building", b.id, b.position)
 		Events.add("social", "%s moved into a %s" % [pname, b.def["name"]])
 	else:
 		arrived = true
@@ -693,7 +701,15 @@ func _move(dt: float) -> void:
 			target_pos = ta.position
 	var to := target_pos - position
 	to.y = 0.0
-	if to.length() < 0.9:
+	# buildings block movement at their walls, so "arrival" at one means
+	# reaching its edge, not its unreachable center
+	var arrive_d := 0.9
+	if target_kind == "building":
+		var tb = G.buildings.get_building(target_id)
+		if tb != null:
+			var bsz: Vector2 = tb.def["size"]
+			arrive_d = maxf(bsz.x, bsz.y) * 0.5 + 1.4
+	if to.length() < arrive_d:
 		arrived = true
 		return
 	var dir := to.normalized()
@@ -703,6 +719,8 @@ func _move(dt: float) -> void:
 		if G.world.in_zone(ahead, "predator") and not G.world.in_zone(position, "predator"):
 			dir = dir.rotated(Vector3.UP, PI * 0.5)
 	var step: float = base_speed() * dt
+	if G.world.in_river(position) and not G.buildings.road_at(position):
+		step *= 0.35  # wading; roads over rivers act as bridges
 	var next := position + dir * step
 	if _obstructed(next):
 		# try both diagonals, then a full sidestep, then back up — never fake arrival
@@ -721,7 +739,8 @@ func _move(dt: float) -> void:
 	rotation.y = atan2(dir.x, dir.z)
 
 func _obstructed(p: Vector3) -> bool:
-	return G.buildings.blocked(p) or G.world.in_water(p)
+	# lakes are impassable; rivers are fordable (handled as a wading slowdown)
+	return G.buildings.blocked(p) or G.world.in_lake(p)
 
 # ---------------- Action execution ----------------
 
@@ -1184,6 +1203,10 @@ func deserialize(d: Dictionary) -> void:
 	position = Vector3(float(d["x"]), 0, float(d["z"]))
 	brain = PersonBrain.new()
 	brain.from_dict(d.get("brain", {}))
+	# movement state is not persisted — stand still until the next decision
+	action = "idle"
+	arrived = true
+	target_pos = position
 	if not alive:
 		rotation.x = deg_to_rad(88)
 		position.y = 0.2

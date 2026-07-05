@@ -108,12 +108,16 @@ func tick(dt: float) -> void:
 	var now: float = G.clock.total_time
 	while hotspots.size() > 0 and now - hotspots[0]["t"] > G.clock.day_length() * 2.0:
 		hotspots.pop_front()
-	# dispatch police to wanted criminals
+	# dispatch police to wanted criminals (one pursuer per criminal)
 	for i in range(wanted.size() - 1, -1, -1):
 		var cid: int = wanted[i]
 		var criminal = G.people.get_person(cid)
 		if criminal == null or not criminal.alive or criminal.prison_until >= 0.0:
 			wanted.remove_at(i)
+			continue
+		var pursuer = _pursuer_of(cid)
+		if pursuer != null:
+			pursuer.target_pos = criminal.position  # track the moving suspect
 			continue
 		var officer = _free_officer(criminal.position)
 		if officer != null:
@@ -123,6 +127,12 @@ func tick(dt: float) -> void:
 			officer.target_pos = criminal.position
 			officer.arrived = false
 			officer.try_speak("police_warning", true)
+
+func _pursuer_of(cid: int) -> Variant:
+	for p in G.people.alive_list():
+		if p.job_type == "police" and p.action == "arrest" and p.target_kind == "person" and p.target_id == cid:
+			return p
+	return null
 
 func _free_officer(pos: Vector3) -> Variant:
 	var best = null
@@ -168,10 +178,14 @@ func try_arrest(officer, criminal) -> void:
 			+ (criminal.position - officer.position).normalized() * 30.0)
 
 func _prison_with_space() -> Variant:
+	# each prison adds soc.prison_capacity worth of cells; overflow spills to
+	# the next prison in the list
 	var cap := int(Params.get_p("soc.prison_capacity"))
+	var used := in_prison_count()
 	for b in G.buildings.list_type("prison"):
-		if in_prison_count() < cap:
+		if used < cap:
 			return b
+		used -= cap
 	return null
 
 func in_prison_count() -> int:

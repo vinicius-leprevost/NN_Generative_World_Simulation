@@ -108,6 +108,8 @@ func on_death(p: Person, cause: String) -> void:
 func try_bond(a: Person, b: Person) -> void:
 	if a.partner_id >= 0 or b.partner_id >= 0:
 		return
+	if _is_kin(a, b):
+		return
 	if not Rng.chance(Params.get_p("pop.relationship_rate") * 0.5):
 		return
 	a.partner_id = b.id
@@ -124,6 +126,17 @@ func try_bond(a: Person, b: Person) -> void:
 		for pid in [a.id, b.id]:
 			if not shared.residents.has(pid):
 				shared.residents.append(pid)
+
+func _is_kin(a: Person, b: Person) -> bool:
+	# parent/child or shared parent (sibling)
+	if a.parent_ids.has(b.id) or b.parent_ids.has(a.id):
+		return true
+	if a.child_ids.has(b.id) or b.child_ids.has(a.id):
+		return true
+	for pid in a.parent_ids:
+		if b.parent_ids.has(pid):
+			return true
+	return false
 
 func try_reproduce(a: Person, b: Person) -> void:
 	var mother := a if a.sex == "f" else b

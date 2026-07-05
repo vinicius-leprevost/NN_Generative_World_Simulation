@@ -95,6 +95,11 @@ func _remove_at(pos: Vector3) -> void:
 		if pos.distance_to(Vector3(r["x"], 0, r["z"])) < 2.5:
 			G.world.remove_resource(r["id"])
 			return
+	for car in G.vehicles.cars.values():
+		if car["node"].position.distance_to(pos) < 2.5:
+			Events.add("god", "God removed a car")
+			G.vehicles.remove_car(car["id"])
+			return
 	var cell: Vector2i = G.buildings.road_key(pos)
 	if G.buildings.roads.has(cell):
 		G.buildings.roads.erase(cell)

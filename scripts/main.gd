@@ -43,6 +43,7 @@ var ui
 var selected = null
 var sel_ring: MeshInstance3D
 var _autosave_timer := 0.0
+var _last_autosave_msec := 0
 var _smoke := false          # headless CI mode: `godot --headless -- --smoke`
 var _smoke_frames := 0
 var _smoke_quit_delay := -1
@@ -144,8 +145,12 @@ func _process(delta: float) -> void:
 		crime.tick(dt)
 		politics.tick(dt)
 		_autosave_timer += dt
-		if _autosave_timer > clock.day_length() * 3.0:
+		# sim-time cadence with a real-time floor, so 20x speed doesn't
+		# hammer the disk with an autosave every few real seconds
+		if _autosave_timer > clock.day_length() * 3.0 \
+				and Time.get_ticks_msec() - _last_autosave_msec > 60_000:
 			_autosave_timer = 0.0
+			_last_autosave_msec = Time.get_ticks_msec()
 			if SaveMgr.save_slot(0):
 				ui.toast("Autosaved (slot 0)")
 	world._update_sun()  # keep lighting live even while paused (god time control)

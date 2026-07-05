@@ -79,7 +79,9 @@ func _update_trust(dt: float) -> void:
 	services += 0.05 * minf(G.buildings.count("school"), 2)
 	services += 0.03 * minf(G.buildings.count("police_station"), 2)
 	var pop := maxi(G.people.alive_count(), 1)
-	var crime_pressure := minf(float(G.crime.stats["total"]) / pop * 0.15, 0.3)
+	# hotspots is a ~2-day sliding window: trust reacts to CURRENT crime,
+	# not the lifetime total (which only ever grows)
+	var crime_pressure := minf(float(G.crime.hotspots.size()) / pop * 0.6, 0.3)
 	var target := clampf(base + services - crime_pressure - corruption * 0.3, 0.0, 1.0)
 	trust = lerpf(trust, target, clampf(dt * 0.02, 0.0, 1.0))
 	corruption = clampf(corruption + Rng.randfn(0.0, 0.005) * Params.get_p("soc.corruption"), 0.0, 1.0)
@@ -155,6 +157,13 @@ func _president_acts() -> void:
 	if pres == null or not pres.alive:
 		_clear_president_assignment()
 		return
+	# laws pass under CURRENT crime pressure, independent of project funding
+	# (previously unreachable behind the project early-returns)
+	if G.crime.hotspots.size() > maxi(G.people.alive_count(), 1) / 3 \
+			and laws.size() < 5 and Rng.chance(0.5):
+		var law := "Public Order Act %d" % (laws.size() + 1)
+		laws.append(law)
+		Events.add("politics", "Law passed: %s" % law)
 	if pres.traits.get("greed", 0.0) > 0.7 and Rng.chance(Params.get_p("soc.corruption") * 0.4):
 		var skim: float = minf(G.economy.treasury * 0.2, 100.0)
 		if skim > 5.0:
@@ -195,10 +204,6 @@ func _president_acts() -> void:
 		_last_decision += " (issued %.0f public debt)" % debt_added
 	_last_blocker = ""
 	Events.add("politics", _last_decision)
-	if G.crime.stats["total"] > maxi(G.people.alive_count(), 1) * 2 and laws.size() < 5 and Rng.chance(0.5):
-		var law := "Public Order Act %d" % (laws.size() + 1)
-		laws.append(law)
-		Events.add("politics", "Law passed: %s" % law)
 
 func _analyze_world() -> Dictionary:
 	var people: Array = G.people.alive_list()
@@ -344,7 +349,8 @@ func _add_crime_candidate(out: Array, pop: int, fallback: Vector3) -> void:
 	var desired: int = maxi(1, int(pop / 300) + 1)
 	if G.buildings.planned_count("police_station") >= desired:
 		return
-	var crime_rate: float = float(G.crime.stats["total"]) / maxf(float(pop), 1.0)
+	# recent-window crime rate, not the ever-growing lifetime total
+	var crime_rate: float = float(G.crime.hotspots.size()) / maxf(float(pop), 1.0) * 3.0
 	var pressure: float = G.crime.wanted.size() * 0.25 + G.crime.hotspots.size() * 0.08 + crime_rate
 	if pressure <= 1.0:
 		return

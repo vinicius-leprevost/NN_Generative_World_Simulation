@@ -75,9 +75,9 @@ func _update_sun() -> void:
 	if G.clock == null:
 		return
 	var h: float = G.clock.hour
-	var t := clampf((h - 6.0) / 12.0, 0.0, 1.0)  # 0 at dawn, 1 at dusk
+	var t := clampf((h - 6.0) / 14.0, 0.0, 1.0)  # 0 at dawn (6:00), 1 at nightfall (20:00)
 	var daylight := sin(t * PI)
-	if h < 6.0 or h > 18.0:
+	if h < 6.0 or h >= 20.0:  # matches TimeSystem.is_night()
 		daylight = 0.0
 	sun.rotation_degrees = Vector3(-15.0 - 150.0 * t, -30.0, 0.0)
 	sun.light_energy = maxf(daylight * 1.25, 0.04)
@@ -177,7 +177,16 @@ func nearest_water(pos: Vector3, max_dist := 1e9) -> Dictionary:
 func remove_water_near(pos: Vector3, radius := 15.0) -> void:
 	for i in range(water_bodies.size() - 1, -1, -1):
 		var body: Dictionary = water_bodies[i]
-		if Vector3(body["x"], 0, body["z"]).distance_to(pos) < radius + body["radius"]:
+		var hit := false
+		if body["type"] == "lake":
+			hit = Vector3(body["x"], 0, body["z"]).distance_to(pos) < radius + body["radius"]
+		else:
+			# rivers live in their points array, not their start point
+			for pt in body["points"]:
+				if Vector2(pt[0], pt[1]).distance_to(Vector2(pos.x, pos.z)) < radius + body["radius"]:
+					hit = true
+					break
+		if hit:
 			var n = _body_nodes.get(body["id"])
 			if n != null:
 				n.queue_free()
@@ -185,12 +194,29 @@ func remove_water_near(pos: Vector3, radius := 15.0) -> void:
 			water_bodies.remove_at(i)
 	_rebuild_water_points()
 
-func in_water(pos: Vector3) -> bool:
+func in_lake(pos: Vector3) -> bool:
 	for body in water_bodies:
 		if body["type"] == "lake":
 			if Vector3(body["x"], 0, body["z"]).distance_to(pos) < body["radius"]:
 				return true
 	return false
+
+func in_river(pos: Vector3) -> bool:
+	var p2 := Vector2(pos.x, pos.z)
+	for body in water_bodies:
+		if body["type"] == "lake":
+			continue
+		var pts: Array = body["points"]
+		for i in range(pts.size() - 1):
+			var a := Vector2(pts[i][0], pts[i][1])
+			var b := Vector2(pts[i + 1][0], pts[i + 1][1])
+			var c := Geometry2D.get_closest_point_to_segment(p2, a, b)
+			if c.distance_to(p2) < body["radius"]:
+				return true
+	return false
+
+func in_water(pos: Vector3) -> bool:
+	return in_lake(pos) or in_river(pos)
 
 # ---------------- Food resources ----------------
 

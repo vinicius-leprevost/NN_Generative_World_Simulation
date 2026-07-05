@@ -178,6 +178,7 @@ func _build_actions_tab() -> Control:
 		var slot: int = i
 		_btn(g1b, "Save %d" % i, func(): _save(slot))
 		_btn(g1b, "Load %d" % i, func(): _load(slot))
+	_btn(g1b, "Load Autosave", func(): _load(0))
 
 	_section(vb, "Spawn People")
 	var g2 := _grid(vb)

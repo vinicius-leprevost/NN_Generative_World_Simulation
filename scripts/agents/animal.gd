@@ -261,12 +261,14 @@ func _move(dt: float) -> void:
 	var sp: float = def["speed"] * (0.5 + 0.5 * health / 100.0) * G.weather.move_mult()
 	if behavior == "flee" or behavior == "hunt":
 		sp *= 1.4
+	if G.world.in_river(position):
+		sp *= 0.45  # animals wade/swim across rivers
 	var next := position + dir * sp * dt
-	if G.world.in_water(next) or G.buildings.blocked(next):
+	if G.world.in_lake(next) or G.buildings.blocked(next):
 		next = position + dir.rotated(Vector3.UP, PI * 0.4) * sp * dt
-		if G.world.in_water(next) or G.buildings.blocked(next):
+		if G.world.in_lake(next) or G.buildings.blocked(next):
 			next = position + dir.rotated(Vector3.UP, -PI * 0.4) * sp * dt
-			if G.world.in_water(next) or G.buildings.blocked(next):
+			if G.world.in_lake(next) or G.buildings.blocked(next):
 				next = position - dir * sp * dt  # back up rather than fake arrival
 	position = G.world.clamp_pos(next)
 	rotation.y = atan2(dir.x, dir.z)
@@ -372,6 +374,10 @@ func deserialize(d: Dictionary) -> void:
 	herd_id = int(d.get("herd_id", -1))
 	territory = Vector3(float(d["tx"]), 0, float(d["tz"]))
 	position = Vector3(float(d["x"]), 0, float(d["z"]))
+	# movement state is not persisted — stand still until the next decision
+	behavior = "wander"
+	arrived = true
+	target_pos = position
 	if not alive:
 		rotation.z = deg_to_rad(85)
 		body.material_override = Vis.mat(Color(0.45, 0.42, 0.4))

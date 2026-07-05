@@ -34,6 +34,11 @@ func create(gtype: String, members: Array, gname := "") -> Dictionary:
 	return g
 
 func family_create(a, b) -> Dictionary:
+	# sanitize stale ids (their old family group may have been erased)
+	if a.family_id >= 0 and not groups.has(a.family_id):
+		a.family_id = -1
+	if b.family_id >= 0 and not groups.has(b.family_id):
+		b.family_id = -1
 	if a.family_id >= 0:
 		add_member(a.family_id, b.id)
 		b.family_id = a.family_id
@@ -75,7 +80,9 @@ func remove_member(gid: int, pid: int) -> void:
 		if g["leader"] == pid:
 			g["leader"] = -1
 		if g["members"].is_empty():
+			var dialect := int(g.get("dialect", -1))
 			groups.erase(gid)
+			G.language.release_dialect(dialect)  # GC orphaned dialects
 	var p = G.people.get_person(pid)
 	if p != null:
 		p.group_ids.erase(gid)
@@ -126,7 +133,31 @@ func tick(dt: float) -> void:
 	_try_form_community()
 	_try_form_gang()
 	_try_form_hunting_group()
+	_try_form_political()
 	_gang_conflict()
+
+func _try_form_political() -> void:
+	# political movements need an audience: a government or a real town
+	if G.people.alive_count() < 15 and G.buildings.count("government") == 0:
+		return
+	if not Rng.chance(Params.get_p("soc.political_rate") * 0.2):
+		return
+	var seed_p = G.people.random_alive()
+	if seed_p == null or not seed_p.is_adult() or seed_p.traits["ambition"] < 0.55:
+		return
+	if _in_group_of_type(seed_p, "political"):
+		return
+	var backers: Array = []
+	for oid in seed_p.relationships.keys():
+		if seed_p.relationships[oid] > 30.0:
+			var o = G.people.get_person(oid)
+			if o != null and o.alive and o.is_adult() and not _in_group_of_type(o, "political"):
+				backers.append(oid)
+	if backers.size() >= 3:
+		backers.append(seed_p.id)
+		var g := create("political", backers.slice(0, 8))
+		g["political_power"] = 0.3
+		g["leader"] = seed_p.id
 
 func _try_form_community() -> void:
 	if not Rng.chance(Params.get_p("soc.group_rate") * 0.35):
