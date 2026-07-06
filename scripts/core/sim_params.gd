@@ -103,6 +103,8 @@ func _define_all() -> void:
 	_d("nn.lang_learn", "Language Learning Speed", "Neural", 0.0, 3.0, 1.0)
 	_d("nn.comm_radius", "Communication Radius", "Neural", 3.0, 40.0, 12.0, 0.5)
 	_d("nn.dialect_diverge", "Dialect Divergence Rate", "Neural", 0.0, 3.0, 1.0)
+	_d("nn.net_strength", "Neural Net Influence", "Neural", 0.0, 1.5, 0.35)
+	_d("nn.mutation", "Brain Mutation Strength", "Neural", 0.0, 0.5, 0.08)
 	# ---------------- Economy ----------------
 	_d("eco.start_money", "Starting Money", "Economy", 0.0, 1000.0, 20.0, 1.0)
 	_d("eco.wage_mult", "Wage Multiplier", "Economy", 0.1, 5.0, 1.0)

@@ -1,41 +1,156 @@
 class_name PersonBrain extends RefCounted
-## PersonBrain: lightweight neural-style decision system.
-## Weighted inputs (needs, environment, traits, memory, social pressure) are
-## combined into utility scores per action; exploration noise makes behavior
-## individual; reinforcement adjusts weights from lived outcomes; children
-## inherit mutated weights from parents.
+## PersonBrain: two-layer decision system.
+##
+## Layer 1 (interpretable base): weighted utility scores per action from
+## needs, environment, traits and social pressure — keeps behavior sane.
+## Layer 2 (neural net): a real feed-forward network (20 sensors -> 10 tanh
+## hidden -> per-action tanh output) MODULATES each action's utility. The
+## net gives minds cross-input pattern recognition the hand-tuned base
+## cannot express ("hungry AND night AND predator near -> don't forage").
+##
+## Learning: reward-modulated plasticity. The habit weight of the rewarded
+## action shifts (as before), and the net's output weights for that action
+## are nudged along the hidden activations that were active when the
+## decision was made (an eligibility trace). Learning rate scales with the
+## person's intelligence trait.
+##
+## Evolution: children inherit both layers by per-gene crossover of their
+## parents plus Gaussian mutation (God-tunable), with generation tracking.
 
 const ACTIONS := ["wander", "seek_food", "seek_water", "rest", "go_home",
 	"socialize", "work", "seek_job", "build", "study", "reproduce", "hunt",
 	"commit_crime", "patrol", "flee", "buy_food", "buy_car", "care_animal",
 	"help", "communicate"]
 
-var w: Dictionary = {}
+const INPUTS := 20
+const HIDDEN := 10
+
+var w: Dictionary = {}              # habit layer: action -> weight
+var w_in := PackedFloat32Array()    # HIDDEN x INPUTS
+var b_h := PackedFloat32Array()     # HIDDEN
+var w_out: Dictionary = {}          # action -> PackedFloat32Array(HIDDEN)
+var b_out: Dictionary = {}          # action -> float
+var generation := 0
+
+var _last_h := PackedFloat32Array() # hidden activations at the last decision
+var _last_action := ""
+var _lr_mult := 1.0                 # intelligence-scaled learning rate
 
 func _init() -> void:
 	for a in ACTIONS:
 		w[a] = Rng.randf_range(0.85, 1.15)
+	_init_net()
+
+func _init_net() -> void:
+	w_in.resize(HIDDEN * INPUTS)
+	for i in range(w_in.size()):
+		w_in[i] = Rng.randfn(0.0, 0.35)
+	b_h.resize(HIDDEN)
+	for j in range(HIDDEN):
+		b_h[j] = 0.0
+	for a in ACTIONS:
+		var row := PackedFloat32Array()
+		row.resize(HIDDEN)
+		for j in range(HIDDEN):
+			row[j] = Rng.randfn(0.0, 0.3)
+		w_out[a] = row
+		b_out[a] = 0.0
 
 static func inherit(a, b):
 	var child = load("res://scripts/agents/person_brain.gd").new()
+	var sigma: float = Params.get_p("nn.mutation")
 	for k in ACTIONS:
 		var pa: float = a.w.get(k, 1.0)
 		var pb: float = b.w.get(k, 1.0)
-		child.w[k] = clampf((pa + pb) * 0.5 + Rng.randfn(0.0, 0.06), 0.3, 2.5)
+		child.w[k] = clampf((pa if Rng.chance(0.5) else pb) + Rng.randfn(0.0, sigma), 0.3, 2.5)
+	# per-gene crossover + mutation of the net (neuroevolution)
+	for i in range(child.w_in.size()):
+		var g: float = a.w_in[i] if Rng.chance(0.5) else b.w_in[i]
+		child.w_in[i] = clampf(g + Rng.randfn(0.0, sigma), -2.5, 2.5)
+	for j in range(HIDDEN):
+		var gb: float = a.b_h[j] if Rng.chance(0.5) else b.b_h[j]
+		child.b_h[j] = clampf(gb + Rng.randfn(0.0, sigma * 0.5), -1.5, 1.5)
+	for k in ACTIONS:
+		var ra: PackedFloat32Array = a.w_out.get(k, child.w_out[k])
+		var rb: PackedFloat32Array = b.w_out.get(k, child.w_out[k])
+		var row: PackedFloat32Array = child.w_out[k]
+		for j in range(HIDDEN):
+			var g2: float = ra[j] if Rng.chance(0.5) else rb[j]
+			row[j] = clampf(g2 + Rng.randfn(0.0, sigma), -2.5, 2.5)
+		child.b_out[k] = clampf((float(a.b_out.get(k, 0.0)) if Rng.chance(0.5)
+			else float(b.b_out.get(k, 0.0))) + Rng.randfn(0.0, sigma * 0.5), -1.0, 1.0)
+	child.generation = maxi(int(a.generation), int(b.generation)) + 1
 	return child
 
 func reinforce(action: String, reward: float) -> void:
 	if not w.has(action):
 		return
-	var lr := Params.get_p("nn.learning_rate")
+	var lr := Params.get_p("nn.learning_rate") * _lr_mult
+	# habit layer
 	w[action] = clampf(w[action] + lr * reward, 0.3, 2.5)
+	# neural layer: credit the hidden features active at the decision
+	if _last_action == action and _last_h.size() == HIDDEN:
+		var row: PackedFloat32Array = w_out.get(action, PackedFloat32Array())
+		if row.size() == HIDDEN:
+			for j in range(HIDDEN):
+				row[j] = clampf(row[j] + lr * reward * _last_h[j] * 0.5, -2.5, 2.5)
+			b_out[action] = clampf(float(b_out.get(action, 0.0)) + lr * reward * 0.1, -1.0, 1.0)
 
-func to_dict() -> Dictionary:
-	return w.duplicate()
+# ---------------- Sensors & forward pass ----------------
 
-func from_dict(d: Dictionary) -> void:
-	for k in d.keys():
-		w[k] = float(d[k])
+func _sense(p, ctx: Dictionary) -> PackedFloat32Array:
+	var x := PackedFloat32Array()
+	x.resize(INPUTS)
+	x[0] = clampf(p.hunger / 100.0, 0.0, 1.2)
+	x[1] = clampf(p.thirst / 100.0, 0.0, 1.2)
+	x[2] = clampf(p.energy / 100.0, 0.0, 1.0)
+	x[3] = clampf(p.health / 100.0, 0.0, 1.0)
+	x[4] = clampf(p.money / 100.0, 0.0, 1.5)
+	x[5] = clampf(p.age / 90.0, 0.0, 1.2)
+	x[6] = 1.0 if G.clock.is_night() else 0.0
+	x[7] = clampf(ctx["danger"] / 1.5, 0.0, 1.0)
+	x[8] = clampf(ctx["predators"].size() / 3.0, 0.0, 1.0)
+	x[9] = clampf(ctx["people"].size() / 6.0, 0.0, 1.0)
+	x[10] = 1.0 if p.home_id >= 0 else 0.0
+	x[11] = 1.0 if p.job_type != "" else 0.0
+	x[12] = 1.0 if p.partner_id >= 0 else 0.0
+	x[13] = clampf(p.pocket_food / maxf(p.pocket_food_max(), 1.0), 0.0, 1.0)
+	x[14] = clampf(p.pocket_water / maxf(p.pocket_water_max(), 1.0), 0.0, 1.0)
+	x[15] = 1.0 if ctx["water"]["ok"] else 0.0
+	x[16] = 1.0 if ctx["store"] != null else 0.0
+	x[17] = 1.0 if G.weather.move_mult() < 0.95 else 0.0
+	x[18] = 1.0 if p.sick else 0.0
+	x[19] = clampf(p.crimes_committed / 5.0, 0.0, 1.0)
+	return x
+
+func _forward_hidden(x: PackedFloat32Array) -> PackedFloat32Array:
+	var h := PackedFloat32Array()
+	h.resize(HIDDEN)
+	for j in range(HIDDEN):
+		var s: float = b_h[j]
+		var base := j * INPUTS
+		for i in range(INPUTS):
+			s += w_in[base + i] * x[i]
+		h[j] = tanh(s)
+	return h
+
+func _net_out(action: String, h: PackedFloat32Array) -> float:
+	var row: PackedFloat32Array = w_out.get(action, PackedFloat32Array())
+	if row.size() != HIDDEN:
+		return 0.0
+	var s: float = float(b_out.get(action, 0.0))
+	for j in range(HIDDEN):
+		s += row[j] * h[j]
+	return tanh(s)
+
+## Multiplicative modulation keeps gating intact: an action the base scores
+## at zero (e.g. patrol for non-police) stays zero whatever the net says.
+func _modulate(action: String, base: float, h: PackedFloat32Array, strength: float) -> float:
+	if base <= 0.0 or strength <= 0.0:
+		return base
+	return base * clampf(1.0 + _net_out(action, h) * strength, 0.3, 1.9)
+
+# ---------------- Decision ----------------
 
 ## Score every action for person `p` given perception context `ctx`,
 ## then commit the best one via p.start_action().
@@ -49,6 +164,7 @@ func decide(p) -> void:
 	var night: bool = G.clock.is_night()
 	var stage: String = p.stage()
 	var adult: bool = stage == "adult" or stage == "elder"
+	_lr_mult = 0.5 + p.traits.get("intelligence", 0.5)
 
 	# --- survival ---
 	u["seek_food"] = w["seek_food"] * pow(hunger_n, 1.4) * 4.2 * Params.get_p("nn.hunger_w") * surv
@@ -134,8 +250,16 @@ func decide(p) -> void:
 	# --- baseline curiosity ---
 	u["wander"] = w["wander"] * (0.35 + p.traits["curiosity"] * 0.5)
 
-	# --- exploration noise: this is what makes each mind individual ---
-	var explore := Params.get_p("nn.explore")
+	# --- neural modulation: the net reshapes the utility landscape ---
+	var strength := Params.get_p("nn.net_strength")
+	var h := PackedFloat32Array()
+	if strength > 0.0:
+		h = _forward_hidden(_sense(p, ctx))
+		for k in u.keys():
+			u[k] = _modulate(k, u[k], h, strength)
+
+	# --- exploration noise, individualized by curiosity ---
+	var explore: float = Params.get_p("nn.explore") * (0.6 + p.traits["curiosity"] * 0.8)
 	for k in u.keys():
 		u[k] = maxf(u[k] + Rng.randfn(0.0, explore * 0.35), 0.0)
 
@@ -145,4 +269,51 @@ func decide(p) -> void:
 		if u[k] > best_u:
 			best_u = u[k]
 			best = k
+	_last_h = h
+	_last_action = best
 	p.start_action(best, ctx)
+
+# ---------------- Persistence ----------------
+
+func to_dict() -> Dictionary:
+	var out_ser := {}
+	var bias_ser := {}
+	for a in ACTIONS:
+		out_ser[a] = _round_arr(w_out[a])
+		bias_ser[a] = snappedf(float(b_out.get(a, 0.0)), 0.001)
+	return {"w": w.duplicate(), "gen": generation, "w_in": _round_arr(w_in),
+		"b_h": _round_arr(b_h), "w_out": out_ser, "b_out": bias_ser}
+
+func _round_arr(arr: PackedFloat32Array) -> Array:
+	var out: Array = []
+	for v in arr:
+		out.append(snappedf(v, 0.001))
+	return out
+
+func from_dict(d: Dictionary) -> void:
+	# legacy saves stored the habit weights flat; new saves nest them
+	var habits: Dictionary = d.get("w", d)
+	for k in habits.keys():
+		if w.has(k) and (habits[k] is float or habits[k] is int):
+			w[k] = float(habits[k])
+	generation = int(d.get("gen", 0))
+	var win: Array = d.get("w_in", [])
+	if win.size() == HIDDEN * INPUTS:
+		for i in range(win.size()):
+			w_in[i] = float(win[i])
+	var bh: Array = d.get("b_h", [])
+	if bh.size() == HIDDEN:
+		for j in range(HIDDEN):
+			b_h[j] = float(bh[j])
+	var wout: Dictionary = d.get("w_out", {})
+	for a in wout.keys():
+		if w_out.has(a):
+			var row_src: Array = wout[a]
+			if row_src.size() == HIDDEN:
+				var row: PackedFloat32Array = w_out[a]
+				for j in range(HIDDEN):
+					row[j] = float(row_src[j])
+	var bout: Dictionary = d.get("b_out", {})
+	for a in bout.keys():
+		if b_out.has(a):
+			b_out[a] = float(bout[a])

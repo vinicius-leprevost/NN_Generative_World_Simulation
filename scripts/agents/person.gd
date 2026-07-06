@@ -61,6 +61,9 @@ var brain: PersonBrain
 var _decide_timer := 0.0
 var _commit_time := 0.0
 var _speak_timer := 0.0
+var _path := PackedVector3Array()   # A* waypoints toward target_pos
+var _path_i := 0
+var _repath_timer := 0.0
 var _label_timer := 0.0
 var _action_time := 0.0
 var _last_stage := ""
@@ -570,12 +573,19 @@ func _set_point(p: Vector3) -> void:
 	target_pos = G.world.clamp_pos(p)
 	target_kind = "point"
 	arrived = false
+	_compute_path()
 
 func _set_entity(kind: String, eid: int, pos: Vector3) -> void:
 	target_kind = kind
 	target_id = eid
 	target_pos = pos
 	arrived = false
+	_compute_path()
+
+func _compute_path() -> void:
+	_path = G.buildings.nav.find_path(position, target_pos)
+	_path_i = 0
+	_repath_timer = 0.0
 
 func _set_wander_target() -> void:
 	var dir := Vector3(Rng.randf_range(-1, 1), 0, Rng.randf_range(-1, 1)).normalized()
@@ -723,6 +733,14 @@ func _move(dt: float) -> void:
 		var ta = G.animals.get_animal(target_id)
 		if ta != null and ta.alive:
 			target_pos = ta.position
+	_repath_timer += dt
+	if not _path.is_empty():
+		# moving target drifted away from the planned route -> replan
+		var pend: Vector3 = _path[_path.size() - 1]
+		if _repath_timer > 1.2 and target_pos.distance_to(pend) > 4.0:
+			_compute_path()
+	elif _repath_timer > 2.0:
+		_compute_path()  # no route earlier (blocked/unreachable); try again
 	var to := target_pos - position
 	to.y = 0.0
 	# buildings block movement at their walls, so "arrival" at one means
@@ -736,29 +754,31 @@ func _move(dt: float) -> void:
 	if to.length() < arrive_d:
 		arrived = true
 		return
-	var dir := to.normalized()
-	# steer around known danger when not fleeing/hunting
-	if action != "flee" and action != "hunt":
-		var ahead := position + dir * 6.0
-		if G.world.in_zone(ahead, "predator") and not G.world.in_zone(position, "predator"):
-			dir = dir.rotated(Vector3.UP, PI * 0.5)
+	# head for the current waypoint of the planned path
+	var wp := target_pos
+	if not _path.is_empty():
+		while _path_i < _path.size() - 1 and position.distance_to(_path[_path_i]) < 1.3:
+			_path_i += 1
+		wp = _path[_path_i]
+	var dir := wp - position
+	dir.y = 0.0
+	if dir.length() < 0.05:
+		dir = to
+	dir = dir.normalized()
 	var step: float = base_speed() * dt
-	if G.world.in_river(position) and not G.buildings.road_at(position):
+	if G.world.in_river(position) and not G.buildings.road_near(position):
 		step *= 0.35  # wading; roads over rivers act as bridges
 	var next := position + dir * step
 	if _obstructed(next):
-		# try both diagonals, then a full sidestep, then back up — never fake arrival
+		# path is stale (fresh construction?) — replan, sidestep this frame
+		if _repath_timer > 0.5:
+			_compute_path()
 		var alt := position + dir.rotated(Vector3.UP, PI * 0.45) * step
 		if not _obstructed(alt):
 			next = alt
 		else:
 			alt = position + dir.rotated(Vector3.UP, -PI * 0.45) * step
-			if not _obstructed(alt):
-				next = alt
-			else:
-				var side := 1.0 if (id % 2 == 0) else -1.0
-				alt = position + dir.rotated(Vector3.UP, PI * 0.5 * side) * step * 1.5
-				next = alt if not _obstructed(alt) else position - dir * step
+			next = alt if not _obstructed(alt) else position - dir * step
 	position = G.world.clamp_pos(next)
 	rotation.y = atan2(dir.x, dir.z)
 
