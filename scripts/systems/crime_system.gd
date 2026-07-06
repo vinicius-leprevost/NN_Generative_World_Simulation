@@ -126,6 +126,7 @@ func tick(dt: float) -> void:
 			officer.target_id = cid
 			officer.target_pos = criminal.position
 			officer.arrived = false
+			officer._compute_path()
 			officer.try_speak("police_warning", true)
 
 func _pursuer_of(cid: int) -> Variant:
@@ -176,6 +177,7 @@ func try_arrest(officer, criminal) -> void:
 		criminal.target_kind = "point"
 		criminal.target_pos = G.world.clamp_pos(criminal.position
 			+ (criminal.position - officer.position).normalized() * 30.0)
+		criminal._compute_path()
 
 func _prison_with_space() -> Variant:
 	# each prison adds soc.prison_capacity worth of cells; overflow spills to

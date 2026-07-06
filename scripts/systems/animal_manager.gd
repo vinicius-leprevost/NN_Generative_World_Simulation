@@ -262,6 +262,7 @@ func predator_attack_human(pred: Animal, victim) -> void:
 		victim.arrived = false
 		victim.target_kind = "point"
 		victim.target_pos = G.world.clamp_pos(victim.position + (victim.position - pred.position).normalized() * 22.0)
+		victim._compute_path()
 	# panic ripples outward
 	for p in G.people.nearby(pred.position, 14.0):
 		p.remember("danger", pred.position)

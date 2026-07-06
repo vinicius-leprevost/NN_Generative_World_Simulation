@@ -101,6 +101,7 @@ func add_lake(pos: Vector3, radius := 10.0) -> void:
 	water_bodies.append(body)
 	_make_body_node(body)
 	_rebuild_water_points()
+	_mark_nav_dirty()
 
 func add_river(a: Vector3, b: Vector3) -> void:
 	# Winding chain of segments from a to b
@@ -117,6 +118,7 @@ func add_river(a: Vector3, b: Vector3) -> void:
 	water_bodies.append(body)
 	_make_body_node(body)
 	_rebuild_water_points()
+	_mark_nav_dirty()
 
 func _make_body_node(body: Dictionary) -> void:
 	var root := Node3D.new()
@@ -193,6 +195,7 @@ func remove_water_near(pos: Vector3, radius := 15.0) -> void:
 			_body_nodes.erase(body["id"])
 			water_bodies.remove_at(i)
 	_rebuild_water_points()
+	_mark_nav_dirty()
 
 func in_lake(pos: Vector3) -> bool:
 	for body in water_bodies:
@@ -299,6 +302,7 @@ func add_zone(type: String, pos: Vector3, radius := 18.0) -> void:
 	disc.position = Vector3(pos.x, 0.03, pos.z)
 	_zone_root.add_child(disc)
 	_zone_nodes[z["id"]] = disc
+	_mark_nav_dirty()
 
 func remove_zone_near(pos: Vector3) -> void:
 	for i in range(zones.size() - 1, -1, -1):
@@ -309,6 +313,7 @@ func remove_zone_near(pos: Vector3) -> void:
 				n.queue_free()
 			_zone_nodes.erase(z["id"])
 			zones.remove_at(i)
+			_mark_nav_dirty()
 			return
 
 func zones_of(type: String) -> Array:
@@ -325,6 +330,10 @@ func in_zone(pos: Vector3, type: String) -> bool:
 	return false
 
 # ---------------- Misc ----------------
+
+func _mark_nav_dirty() -> void:
+	if G.buildings != null:
+		G.buildings.nav_dirty = true
 
 func clamp_pos(p: Vector3) -> Vector3:
 	return Vector3(clampf(p.x, -HALF, HALF), 0.0, clampf(p.z, -HALF, HALF))

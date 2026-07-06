@@ -35,7 +35,15 @@ func _process(_delta: float) -> void:
 		if not p.alive or p.arrived:
 			continue
 		var c: Color = ACTION_COLORS.get(p.action, Color(0.6, 0.6, 0.6))
-		lines.append([p.position + Vector3(0, 0.4, 0), p.target_pos + Vector3(0, 0.4, 0), c])
+		# draw the planned A* route (waypoint polyline), not a straight ray
+		var prev: Vector3 = p.position + Vector3(0, 0.4, 0)
+		if p._path.is_empty():
+			lines.append([prev, p.target_pos + Vector3(0, 0.4, 0), c])
+		else:
+			for i in range(p._path_i, p._path.size()):
+				var nxt: Vector3 = p._path[i] + Vector3(0, 0.4, 0)
+				lines.append([prev, nxt, c])
+				prev = nxt
 	for evt in G.language.recent:
 		var col := Color(0.4, 1.0, 0.5) if evt["kind"] == "human" else Color(1.0, 0.5, 0.2)
 		if evt["meaning"] == "danger" or evt["meaning"] == "predator" or evt["kind"] == "animal":

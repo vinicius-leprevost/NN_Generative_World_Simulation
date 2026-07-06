@@ -430,11 +430,21 @@ func _refresh_inspector() -> void:
 			shown += 1
 			if shown >= 6:
 				break
-		t += "\n[b]Brain weights (top)[/b]\n"
+		t += "\n[b]Brain[/b] (generation %d)\n" % p.brain.generation
 		var wk: Array = p.brain.w.keys()
 		wk.sort_custom(func(a, b): return p.brain.w[a] > p.brain.w[b])
+		t += "top habits:\n"
 		for k in wk.slice(0, 5):
 			t += "  %s: %.2f\n" % [k, p.brain.w[k]]
+		t += "net bias (current):\n"
+		var hb: PackedFloat32Array = p.brain._last_h
+		if hb.size() > 0:
+			var nk: Array = p.brain.w_out.keys()
+			nk.sort_custom(func(a, b): return p.brain._net_out(a, hb) > p.brain._net_out(b, hb))
+			for k in nk.slice(0, 3):
+				t += "  %s: %+.2f\n" % [k, p.brain._net_out(k, hb)]
+		else:
+			t += "  (no decision yet)\n"
 		inspector_text.text = t
 	elif obj is Animal:
 		var a: Animal = obj

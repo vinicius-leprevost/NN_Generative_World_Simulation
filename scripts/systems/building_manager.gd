@@ -21,6 +21,9 @@ var grid_b := SpatialGrid.new(8.0)
 var completed_count := 0
 var abandoned_count := 0
 
+var nav := NavGrid.new()     # A* pathfinding over buildings/water/roads
+var nav_dirty := true
+var _nav_timer := 0.0
 var _road_mmi: MultiMeshInstance3D
 var _roads_dirty := false
 var _planner_timer := 0.0
@@ -31,6 +34,7 @@ var _last_crimes := 0
 var _last_predator_kills := 0
 
 func build() -> void:
+	nav.setup()
 	_road_mmi = MultiMeshInstance3D.new()
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -51,6 +55,7 @@ func spawn_building(btype: String, pos: Vector3) -> Building:
 	buildings[b.id] = b
 	grid_b.update(b.id, b.position)
 	_recompute_power()
+	nav_dirty = true
 	return b
 
 func demolish(bid: int) -> void:
@@ -70,6 +75,7 @@ func demolish(bid: int) -> void:
 	buildings.erase(bid)
 	b.queue_free()
 	_recompute_power()
+	nav_dirty = true
 
 func get_building(bid: int) -> Building:
 	return buildings.get(bid)
@@ -285,6 +291,7 @@ func has_roads() -> bool:
 func add_road_cell(pos: Vector3) -> void:
 	roads[road_key(pos)] = true
 	_roads_dirty = true
+	nav_dirty = true
 
 func add_road_line(a: Vector3, b: Vector3) -> void:
 	var dist := a.distance_to(b)
@@ -386,6 +393,11 @@ func tick(dt: float) -> void:
 		s.tick(dt)
 	if _roads_dirty:
 		_rebuild_roads()
+	_nav_timer += dt
+	if nav_dirty and _nav_timer >= 1.0:
+		_nav_timer = 0.0
+		nav_dirty = false
+		nav.rebuild()
 	_production(dt)
 	_maintenance(dt)
 	_planner_timer += dt
@@ -662,6 +674,7 @@ func clear_all() -> void:
 	completed_count = 0
 	abandoned_count = 0
 	_roads_dirty = true
+	nav_dirty = true
 
 func to_dict() -> Dictionary:
 	var blist: Array = []
