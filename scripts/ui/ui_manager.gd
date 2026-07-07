@@ -5,9 +5,17 @@ const BuildingDB = preload("res://scripts/data/building_db.gd")
 const ConstructionSite = preload("res://scripts/world/construction_site.gd")
 const Person = preload("res://scripts/agents/person.gd")
 const SpeciesDB = preload("res://scripts/data/species_db.gd")
+const UiTheme = preload("res://scripts/ui/ui_theme.gd")
 
-## UIManager: builds the whole interface in code — top HUD bar, God control
-## panel (tabs auto-generated from Params), dashboard, event log, inspector.
+## UIManager: builds the whole interface in code — floating top HUD bar,
+## God control panel (tabs auto-generated from Params), dashboard, event
+## log and inspector as modern rounded cards with a shared dark theme.
+
+const TAB_SHORT := {
+	"Population": "People", "Construction": "Build", "Economy": "Economy",
+	"Audio & Language": "Audio", "Animals": "Animals", "Society": "Society",
+	"Neural": "Neural", "World": "World",
+}
 
 var top_bar: PanelContainer
 var pause_btn: Button
@@ -26,16 +34,24 @@ var dashboard_rtl: RichTextLabel
 var dashboard_scroll: ScrollContainer
 var government_rtl: RichTextLabel
 var government_scroll: ScrollContainer
+var hint_panel: PanelContainer
 var hint_label: Label
+var toast_panel: PanelContainer
 var toast_label: Label
 var perf_label: Label
 
+var _root: Control
 var _param_rows: Dictionary = {}   # key -> {"slider": HSlider, "value": Label}
 var _dash_timer := 0.0
 var _insp_timer := 0.0
 var _toast_timer := 0.0
 
 func build() -> void:
+	_root = Control.new()
+	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.theme = UiTheme.build()
+	add_child(_root)
 	_build_top_bar()
 	_build_god_panel()
 	_build_event_panel()
@@ -49,17 +65,24 @@ func build() -> void:
 func _build_top_bar() -> void:
 	top_bar = PanelContainer.new()
 	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	add_child(top_bar)
+	top_bar.offset_left = 10.0
+	top_bar.offset_right = -10.0
+	top_bar.offset_top = 8.0
+	_root.add_child(top_bar)
 	var box := HBoxContainer.new()
 	top_bar.add_child(box)
-	pause_btn = _btn(box, "Pause", func(): _toggle_pause())
+	pause_btn = _btn(box, "❚❚  Pause", func(): _toggle_pause())
 	_btn(box, "Step", func(): G.clock.request_step())
-	_btn(box, "  -  ", func(): Params.set_p("sim.speed", Params.get_p("sim.speed") * 0.5))
+	_btn(box, "–", func(): Params.set_p("sim.speed", Params.get_p("sim.speed") * 0.5))
 	speed_label = _lbl(box, "x1.0")
-	_btn(box, "  +  ", func(): Params.set_p("sim.speed", Params.get_p("sim.speed") * 2.0))
+	speed_label.custom_minimum_size.x = 44.0
+	speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	speed_label.add_theme_color_override("font_color", UiTheme.ACCENT)
+	_btn(box, "+", func(): Params.set_p("sim.speed", Params.get_p("sim.speed") * 2.0))
 	box.add_child(VSeparator.new())
 	time_label = _lbl(box, "")
 	weather_label = _lbl(box, "")
+	weather_label.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(spacer)
@@ -67,17 +90,19 @@ func _build_top_bar() -> void:
 	for p in ["Low", "Medium", "High", "Sim-heavy", "Visual-heavy"]:
 		preset.add_item(p)
 	preset.select(1)
+	preset.focus_mode = Control.FOCUS_NONE
+	preset.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	preset.item_selected.connect(func(i): G.main.apply_preset(preset.get_item_text(i)))
 	box.add_child(preset)
-	_btn(box, "God Panel (G)", func(): god_panel.visible = not god_panel.visible)
-	_btn(box, "Events (L)", func(): event_panel.visible = not event_panel.visible)
-	_btn(box, "Debug (F3)", func(): G.dbg.toggle())
-	_btn(box, "Save (F5)", func(): _save(1))
-	_btn(box, "Load (F9)", func(): _load(1))
+	box.add_child(VSeparator.new())
+	_btn(box, "God Panel", func(): god_panel.visible = not god_panel.visible, false, "G")
+	_btn(box, "Events", func(): event_panel.visible = not event_panel.visible, false, "L")
+	_btn(box, "Debug", func(): G.dbg.toggle(), false, "F3")
+	_btn(box, "Save", func(): _save(1), false, "F5")
+	_btn(box, "Load", func(): _load(1), false, "F9")
 
 func _toggle_pause() -> void:
 	G.clock.paused = not G.clock.paused
-	pause_btn.text = "Resume" if G.clock.paused else "Pause"
 
 func _save(slot: int) -> void:
 	if SaveMgr.save_slot(slot):
@@ -97,55 +122,90 @@ func _build_god_panel() -> void:
 	god_panel = PanelContainer.new()
 	god_panel.anchor_top = 0.0
 	god_panel.anchor_bottom = 1.0
-	god_panel.offset_top = 40.0
-	god_panel.offset_bottom = 0.0
-	god_panel.custom_minimum_size.x = 400.0
-	add_child(god_panel)
+	god_panel.offset_left = 10.0
+	god_panel.offset_top = 58.0
+	god_panel.offset_bottom = -10.0
+	god_panel.custom_minimum_size.x = 410.0
+	_root.add_child(god_panel)
 	var vbox := VBoxContainer.new()
 	god_panel.add_child(vbox)
-	var title := Label.new()
-	title.text = "  GOD CONTROL PANEL"
-	vbox.add_child(title)
+	_card_header(vbox, "GOD MODE", func(): god_panel.visible = false)
 	var tabs := TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tabs.clip_tabs = true
 	vbox.add_child(tabs)
+	tabs.get_tab_bar().focus_mode = Control.FOCUS_NONE
+	tabs.get_tab_bar().mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	tabs.add_child(_build_actions_tab())
 	for tab_name in Params.tabs():
 		tabs.add_child(_build_param_tab(tab_name))
 	tabs.add_child(_build_government_tab())
 	tabs.add_child(_build_dashboard_tab())
 
+func _card_header(parent: Control, title: String, on_close: Callable) -> void:
+	var head := HBoxContainer.new()
+	parent.add_child(head)
+	var l := Label.new()
+	l.text = title
+	l.add_theme_color_override("font_color", UiTheme.ACCENT)
+	l.add_theme_font_size_override("font_size", 14)
+	head.add_child(l)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(spacer)
+	var x := Button.new()
+	x.text = "×"
+	x.flat = false
+	x.custom_minimum_size = Vector2(28, 28)
+	x.focus_mode = Control.FOCUS_NONE
+	x.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	x.pressed.connect(on_close)
+	head.add_child(x)
+	parent.add_child(HSeparator.new())
+
 func _scroll_vbox(tab_title: String) -> Array:
 	var sc := ScrollContainer.new()
 	sc.name = tab_title
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	var vb := VBoxContainer.new()
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(vb)
 	return [sc, vb]
 
 func _build_param_tab(tab_name: String) -> Control:
-	var pair := _scroll_vbox(tab_name)
+	var pair := _scroll_vbox(TAB_SHORT.get(tab_name, tab_name))
 	var vb: VBoxContainer = pair[1]
+	_section(vb, tab_name)
 	for def in Params.defs_for_tab(tab_name):
 		var row := HBoxContainer.new()
 		vb.add_child(row)
 		var lbl := Label.new()
 		lbl.text = def["label"]
-		lbl.custom_minimum_size.x = 175.0
+		lbl.custom_minimum_size.x = 168.0
 		lbl.clip_text = true
+		lbl.add_theme_font_size_override("font_size", 13)
+		lbl.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
+		lbl.tooltip_text = def["label"]
+		lbl.mouse_filter = Control.MOUSE_FILTER_PASS
 		row.add_child(lbl)
 		var slider := HSlider.new()
 		slider.min_value = def["min"]
 		slider.max_value = def["max"]
 		slider.step = def["step"]
 		slider.value = Params.get_p(def["key"])
-		slider.custom_minimum_size.x = 130.0
+		slider.custom_minimum_size = Vector2(120.0, 22.0)
 		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		slider.focus_mode = Control.FOCUS_NONE
+		slider.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		row.add_child(slider)
 		var val := Label.new()
 		val.text = _fmt(Params.get_p(def["key"]))
-		val.custom_minimum_size.x = 46.0
+		val.custom_minimum_size.x = 50.0
+		val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		val.add_theme_font_size_override("font_size", 13)
+		val.add_theme_color_override("font_color", UiTheme.ACCENT)
 		row.add_child(val)
 		var key: String = def["key"]
 		slider.value_changed.connect(func(v): Params.set_p(key, v))
@@ -171,68 +231,59 @@ func _build_actions_tab() -> Control:
 
 	_section(vb, "Simulation")
 	var g1 := _grid(vb)
-	_btn(g1, "New World", func(): G.main.new_world(); toast("A new world begins"))
-	_btn(g1, "Reset Params", func(): Params.reset_defaults(); toast("Parameters reset"))
+	_btn(g1, "New World", func(): G.main.new_world(); toast("A new world begins"), true)
+	_btn(g1, "Reset Params", func(): Params.reset_defaults(); toast("Parameters reset"), true)
 	var g1b := _grid(vb)
 	for i in [1, 2, 3]:
 		var slot: int = i
-		_btn(g1b, "Save %d" % i, func(): _save(slot))
-		_btn(g1b, "Load %d" % i, func(): _load(slot))
-	_btn(g1b, "Load Autosave", func(): _load(0))
+		_btn(g1b, "Save %d" % i, func(): _save(slot), true)
+		_btn(g1b, "Load %d" % i, func(): _load(slot), true)
+	_btn(g1b, "Load Autosave", func(): _load(0), true)
 
-	_section(vb, "Spawn People")
+	_section(vb, "People")
 	var g2 := _grid(vb)
-	_btn(g2, "Spawn Person", func(): G.god.begin("spawn_person"))
-	_btn(g2, "Remove Tool", func(): G.god.begin("remove"))
+	_btn(g2, "Spawn Person", func(): G.god.begin("spawn_person"), true)
+	_btn(g2, "Remove Tool", func(): G.god.begin("remove"), true)
 
-	_section(vb, "Spawn Animals")
-	var species_opt := OptionButton.new()
-	for s in SpeciesDB.species_list():
-		species_opt.add_item(s)
-	vb.add_child(species_opt)
+	_section(vb, "Animals")
+	var species_opt := _dropdown(vb, SpeciesDB.species_list())
 	var g3 := _grid(vb)
-	_btn(g3, "Spawn Animal", func(): G.god.begin("spawn_animal", species_opt.get_item_text(species_opt.selected)))
+	_btn(g3, "Spawn Animal", func(): G.god.begin("spawn_animal", species_opt.get_item_text(species_opt.selected)), true)
 
 	_section(vb, "Buildings")
-	var btype_opt := OptionButton.new()
-	for t in BuildingDB.types():
-		btype_opt.add_item(t)
-	vb.add_child(btype_opt)
+	var btype_opt := _dropdown(vb, BuildingDB.types())
 	var g4 := _grid(vb)
-	_btn(g4, "Place Instantly", func(): G.god.begin("building", btype_opt.get_item_text(btype_opt.selected)))
-	_btn(g4, "Construction Site", func(): G.god.begin("site", btype_opt.get_item_text(btype_opt.selected)))
+	_btn(g4, "Place Instantly", func(): G.god.begin("building", btype_opt.get_item_text(btype_opt.selected)), true)
+	_btn(g4, "Construction Site", func(): G.god.begin("site", btype_opt.get_item_text(btype_opt.selected)), true)
 
 	_section(vb, "Infrastructure & Nature")
 	var g5 := _grid(vb)
-	_btn(g5, "Road (2 clicks)", func(): G.god.begin("road"))
-	_btn(g5, "River (2 clicks)", func(): G.god.begin("river"))
-	_btn(g5, "Lake", func(): G.god.begin("lake"))
-	_btn(g5, "Food Resource", func(): G.god.begin("resource"))
+	_btn(g5, "Road (2 clicks)", func(): G.god.begin("road"), true)
+	_btn(g5, "River (2 clicks)", func(): G.god.begin("river"), true)
+	_btn(g5, "Lake", func(): G.god.begin("lake"), true)
+	_btn(g5, "Food Resource", func(): G.god.begin("resource"), true)
 
 	_section(vb, "Zones")
-	var zone_opt := OptionButton.new()
-	for z in ["predator", "livestock", "hunting", "restricted", "crime", "community"]:
-		zone_opt.add_item(z)
-	vb.add_child(zone_opt)
+	var zone_opt := _dropdown(vb, ["predator", "livestock", "hunting", "restricted", "crime", "community"])
 	var g6 := _grid(vb)
-	_btn(g6, "Place Zone", func(): G.god.begin("zone", zone_opt.get_item_text(zone_opt.selected)))
-	_btn(g6, "Remove Zone", func(): G.god.begin("remove"))
+	_btn(g6, "Place Zone", func(): G.god.begin("zone", zone_opt.get_item_text(zone_opt.selected)), true)
+	_btn(g6, "Remove Zone", func(): G.god.begin("remove"), true)
 
 	_section(vb, "Time")
 	var g7 := _grid(vb)
-	_btn(g7, "Dawn", func(): G.god.god_set_hour(6.0))
-	_btn(g7, "Noon", func(): G.god.god_set_hour(12.0))
-	_btn(g7, "Dusk", func(): G.god.god_set_hour(20.0))
-	_btn(g7, "Midnight", func(): G.god.god_set_hour(0.0))
+	_btn(g7, "Dawn", func(): G.god.god_set_hour(6.0), true)
+	_btn(g7, "Noon", func(): G.god.god_set_hour(12.0), true)
+	_btn(g7, "Dusk", func(): G.god.god_set_hour(20.0), true)
+	_btn(g7, "Midnight", func(): G.god.god_set_hour(0.0), true)
 
 	_section(vb, "Weather & Disasters")
 	var g8 := _grid(vb)
-	_btn(g8, "Clear", func(): G.god.god_weather("clear"))
-	_btn(g8, "Rain", func(): G.god.god_weather("rain"))
-	_btn(g8, "Storm", func(): G.god.god_weather("storm"))
-	_btn(g8, "Drought", func(): G.weather.start_disaster("drought"))
-	_btn(g8, "Flood", func(): G.weather.start_disaster("flood"))
-	_btn(g8, "Stop Disaster", func(): G.weather.stop_disaster())
+	_btn(g8, "Clear", func(): G.god.god_weather("clear"), true)
+	_btn(g8, "Rain", func(): G.god.god_weather("rain"), true)
+	_btn(g8, "Storm", func(): G.god.god_weather("storm"), true)
+	_btn(g8, "Drought", func(): G.weather.start_disaster("drought"), true)
+	_btn(g8, "Flood", func(): G.weather.start_disaster("flood"), true)
+	_btn(g8, "Stop Disaster", func(): G.weather.stop_disaster(), true)
 	return pair[0]
 
 func _build_dashboard_tab() -> Control:
@@ -247,7 +298,7 @@ func _build_dashboard_tab() -> Control:
 	return pair[0]
 
 func _build_government_tab() -> Control:
-	var pair := _scroll_vbox("Government")
+	var pair := _scroll_vbox("Gov")
 	government_scroll = pair[0]
 	government_rtl = RichTextLabel.new()
 	government_rtl.bbcode_enabled = true
@@ -261,19 +312,19 @@ func _refresh_dashboard() -> void:
 	var snap: Dictionary = G.stats.snapshot()
 	var txt := ""
 	for section in snap.keys():
-		txt += "[b][color=#ffd870]%s[/color][/b]\n" % section.to_upper()
+		txt += "[b][color=#ffc759]%s[/color][/b]\n" % section.to_upper()
 		var data: Dictionary = snap[section]
 		for k in data.keys():
-			txt += "  %s: [color=#bfe3ff]%s[/color]\n" % [k, str(data[k])]
+			txt += "  [color=#9aa3b2]%s[/color]  [color=#dfe6f2]%s[/color]\n" % [k, str(data[k])]
 		txt += "\n"
 	dashboard_rtl.text = txt
 
 func _refresh_government() -> void:
 	var report: Dictionary = G.politics.government_report()
 	var txt := ""
-	txt += "[b][color=#ffd870]GOVERNMENT REPORT[/color][/b]\n"
+	txt += "[b][color=#ffc759]GOVERNMENT REPORT[/color][/b]\n"
 	for k in report.keys():
-		txt += "  %s: [color=#bfe3ff]%s[/color]\n" % [k, str(report[k])]
+		txt += "  [color=#9aa3b2]%s[/color]  [color=#dfe6f2]%s[/color]\n" % [k, str(report[k])]
 	government_rtl.text = txt
 
 # ---------------- Event log ----------------
@@ -281,25 +332,42 @@ func _refresh_government() -> void:
 func _build_event_panel() -> void:
 	event_panel = PanelContainer.new()
 	event_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	event_panel.offset_left = -460.0
-	event_panel.offset_top = -300.0
-	event_panel.offset_right = -4.0
-	event_panel.offset_bottom = -4.0
-	add_child(event_panel)
+	event_panel.offset_left = -470.0
+	event_panel.offset_top = -320.0
+	event_panel.offset_right = -10.0
+	event_panel.offset_bottom = -10.0
+	_root.add_child(event_panel)
 	var vb := VBoxContainer.new()
 	event_panel.add_child(vb)
 	var head := HBoxContainer.new()
 	vb.add_child(head)
-	_lbl(head, "Event Log  ")
+	var title := Label.new()
+	title.text = "EVENTS"
+	title.add_theme_color_override("font_color", UiTheme.ACCENT)
+	title.add_theme_font_size_override("font_size", 14)
+	head.add_child(title)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(spacer)
 	event_filter = OptionButton.new()
 	event_filter.add_item("all")
 	for t in Events.TYPES:
 		event_filter.add_item(t)
+	event_filter.focus_mode = Control.FOCUS_NONE
+	event_filter.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	event_filter.item_selected.connect(func(_i): _rebuild_events())
 	head.add_child(event_filter)
+	var x := Button.new()
+	x.text = "×"
+	x.custom_minimum_size = Vector2(28, 28)
+	x.focus_mode = Control.FOCUS_NONE
+	x.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	x.pressed.connect(func(): event_panel.visible = false)
+	head.add_child(x)
 	event_list = ItemList.new()
 	event_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	event_list.custom_minimum_size = Vector2(440, 240)
+	event_list.custom_minimum_size = Vector2(440, 230)
+	event_list.focus_mode = Control.FOCUS_NONE
 	vb.add_child(event_list)
 	# events arriving while hidden are skipped — refresh when shown again
 	event_panel.visibility_changed.connect(_on_event_panel_visibility)
@@ -341,21 +409,41 @@ func _rebuild_events() -> void:
 func _build_inspector() -> void:
 	inspector = PanelContainer.new()
 	inspector.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	inspector.offset_left = -340.0
-	inspector.offset_top = 44.0
-	inspector.offset_right = -4.0
-	inspector.offset_bottom = 520.0
+	inspector.offset_left = -360.0
+	inspector.offset_top = 58.0
+	inspector.offset_right = -10.0
+	inspector.offset_bottom = 560.0
 	inspector.visible = false
-	add_child(inspector)
+	_root.add_child(inspector)
 	var vb := VBoxContainer.new()
 	inspector.add_child(vb)
+	var head := HBoxContainer.new()
+	vb.add_child(head)
 	inspector_title = Label.new()
-	vb.add_child(inspector_title)
+	inspector_title.add_theme_color_override("font_color", UiTheme.ACCENT)
+	inspector_title.add_theme_font_size_override("font_size", 14)
+	inspector_title.clip_text = true
+	inspector_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(inspector_title)
+	var x := Button.new()
+	x.text = "×"
+	x.custom_minimum_size = Vector2(28, 28)
+	x.focus_mode = Control.FOCUS_NONE
+	x.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	x.pressed.connect(func(): G.main.select(null))
+	head.add_child(x)
+	vb.add_child(HSeparator.new())
+	var sc := ScrollContainer.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vb.add_child(sc)
 	inspector_text = RichTextLabel.new()
 	inspector_text.bbcode_enabled = true
-	inspector_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	inspector_text.custom_minimum_size = Vector2(320, 330)
-	vb.add_child(inspector_text)
+	inspector_text.fit_content = true
+	inspector_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inspector_text.custom_minimum_size = Vector2(320, 300)
+	sc.add_child(inspector_text)
+	vb.add_child(HSeparator.new())
 	inspector_buttons = HFlowContainer.new()
 	vb.add_child(inspector_buttons)
 
@@ -391,7 +479,6 @@ func show_inspector(obj) -> void:
 		var s: ConstructionSite = obj
 		_btn(inspector_buttons, "+50% Progress", func(): s.progress += s.work_required * 0.5; _refresh_inspector())
 		_btn(inspector_buttons, "Cancel", func(): G.buildings.cancel_site(s.id); G.main.select(null))
-	_btn(inspector_buttons, "Close", func(): G.main.select(null))
 
 func _refresh_inspector() -> void:
 	var obj = G.main.selected
@@ -404,7 +491,7 @@ func _refresh_inspector() -> void:
 		var t := ""
 		t += "[b]%s[/b], %s, age %.1f (%s)\n" % [p.pname, "female" if p.sex == "f" else "male", p.age, p.stage()]
 		t += "status: %s%s\n" % ["ALIVE" if p.alive else "DEAD (%s)" % p.cause_of_death, " · IN PRISON" if p.prison_until >= 0.0 else ""]
-		t += "action: [color=#ffd870]%s[/color]  emotion: %s\n" % [p.action, p.emotion]
+		t += "action: [color=#ffc759]%s[/color]  emotion: %s\n" % [p.action, p.emotion]
 		t += "health %.0f · hunger %.0f · thirst %.0f · energy %.0f\n" % [p.health, p.hunger, p.thirst, p.energy]
 		t += "money %.1f · education %.0f · crimes %d\n" % [p.money, p.education, p.crimes_committed]
 		t += "pocket: food %.0f/%.0f · water %.0f/%.0f\n" % [p.pocket_food, p.pocket_food_max(),
@@ -452,7 +539,7 @@ func _refresh_inspector() -> void:
 		var t2 := ""
 		t2 += "[b]%s[/b]%s, age %.1f / %.1f\n" % [a.species, " (PREDATOR)" if a.is_predator() else "", a.age, a.max_age]
 		t2 += "status: %s\n" % ("ALIVE" if a.alive else "DEAD (%s)" % a.cause_of_death)
-		t2 += "behavior: [color=#ffd870]%s[/color]\n" % a.behavior
+		t2 += "behavior: [color=#ffc759]%s[/color]\n" % a.behavior
 		t2 += "health %.0f · hunger %.0f · thirst %.0f\n" % [a.health, a.hunger, a.thirst]
 		t2 += "aggression %.2f · fear %.2f\n" % [a.aggression, a.fear]
 		t2 += "domestication %.0f%% · loyalty %.0f%%\n" % [a.domestication * 100.0, a.loyalty * 100.0]
@@ -466,7 +553,7 @@ func _refresh_inspector() -> void:
 		var t3 := ""
 		t3 += "[b]%s[/b]\n" % b.def["name"]
 		t3 += "hp %.0f · powered: %s\n" % [b.hp, "yes" if b.powered else "no"]
-		t3 += "food stock: %.1f\n" % b.stock.get("food", 0.0)
+		t3 += "food stock: %.1f · water stock: %.1f\n" % [b.stock.get("food", 0.0), b.stock.get("water", 0.0)]
 		t3 += "workers: %d\n" % b.workers.size()
 		for pid in b.workers.keys():
 			t3 += "  %s (%s)\n" % [_pname(pid), b.workers[pid]]
@@ -492,45 +579,61 @@ func _pname(pid: int) -> String:
 # ---------------- Overlay labels ----------------
 
 func _build_overlay_labels() -> void:
+	hint_panel = PanelContainer.new()
+	hint_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hint_panel.offset_top = -64.0
+	hint_panel.offset_bottom = -24.0
+	hint_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hint_panel.add_theme_stylebox_override("panel", UiTheme.pill(UiTheme.BG2))
+	hint_panel.visible = false
+	_root.add_child(hint_panel)
 	hint_label = Label.new()
-	hint_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	hint_label.offset_top = -60.0
-	hint_label.offset_left = -300.0
-	hint_label.offset_right = 300.0
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	add_child(hint_label)
+	hint_panel.add_child(hint_label)
+	toast_panel = PanelContainer.new()
+	toast_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	toast_panel.offset_top = 56.0
+	toast_panel.offset_bottom = 96.0
+	toast_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	toast_panel.add_theme_stylebox_override("panel", UiTheme.pill(UiTheme.BG2))
+	toast_panel.visible = false
+	_root.add_child(toast_panel)
 	toast_label = Label.new()
-	toast_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	toast_label.offset_top = 50.0
-	toast_label.offset_left = -300.0
-	toast_label.offset_right = 300.0
 	toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	add_child(toast_label)
+	toast_label.add_theme_color_override("font_color", UiTheme.ACCENT)
+	toast_panel.add_child(toast_label)
 	perf_label = Label.new()
 	perf_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	perf_label.offset_top = 44.0
-	perf_label.offset_left = 410.0
+	perf_label.offset_top = 58.0
+	perf_label.offset_left = 430.0
+	perf_label.add_theme_font_size_override("font_size", 13)
+	perf_label.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
 	perf_label.visible = false
-	add_child(perf_label)
+	_root.add_child(perf_label)
 
 func set_hint(text: String) -> void:
 	hint_label.text = text
+	hint_panel.visible = text != ""
 
 func toast(text: String) -> void:
 	toast_label.text = text
+	toast_panel.visible = true
+	toast_panel.modulate.a = 1.0
 	_toast_timer = 3.0
 
 # ---------------- Frame update ----------------
 
 func frame_update(delta: float) -> void:
 	speed_label.text = "x%.1f" % Params.get_p("sim.speed")
-	time_label.text = "  %s" % G.clock.time_string()
-	weather_label.text = "  [%s]" % G.weather.state
-	pause_btn.text = "Resume" if G.clock.paused else "Pause"
+	time_label.text = G.clock.time_string()
+	weather_label.text = "· %s" % G.weather.state
+	pause_btn.text = "▶  Resume" if G.clock.paused else "❚❚  Pause"
 	if _toast_timer > 0.0:
 		_toast_timer -= delta
+		if _toast_timer < 0.8:
+			toast_panel.modulate.a = maxf(_toast_timer / 0.8, 0.0)
 		if _toast_timer <= 0.0:
-			toast_label.text = ""
+			toast_panel.visible = false
 	var dashboard_live := dashboard_rtl != null and dashboard_rtl.is_visible_in_tree()
 	var government_live := government_rtl != null and government_rtl.is_visible_in_tree()
 	if god_panel.visible and (dashboard_live or government_live):
@@ -554,9 +657,16 @@ func frame_update(delta: float) -> void:
 
 # ---------------- Helpers ----------------
 
-func _btn(parent: Control, text: String, callback: Callable) -> Button:
+func _btn(parent: Control, text: String, callback: Callable, expand := false, hotkey := "") -> Button:
 	var b := Button.new()
 	b.text = text
+	b.custom_minimum_size.y = 32.0
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	if expand:
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if hotkey != "":
+		b.tooltip_text = "Hotkey: %s" % hotkey
 	b.pressed.connect(callback)
 	parent.add_child(b)
 	return b
@@ -567,11 +677,26 @@ func _lbl(parent: Control, text: String) -> Label:
 	parent.add_child(l)
 	return l
 
+func _dropdown(parent: Control, items: Array) -> OptionButton:
+	var o := OptionButton.new()
+	for item in items:
+		o.add_item(str(item))
+	o.custom_minimum_size.y = 32.0
+	o.focus_mode = Control.FOCUS_NONE
+	o.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	parent.add_child(o)
+	return o
+
 func _section(parent: Control, text: String) -> void:
-	parent.add_child(HSeparator.new())
+	var pad := Control.new()
+	pad.custom_minimum_size.y = 4.0
+	parent.add_child(pad)
 	var l := Label.new()
-	l.text = "[ %s ]" % text
+	l.text = text.to_upper()
+	l.add_theme_color_override("font_color", UiTheme.ACCENT)
+	l.add_theme_font_size_override("font_size", 12)
 	parent.add_child(l)
+	parent.add_child(HSeparator.new())
 
 func _grid(parent: Control) -> GridContainer:
 	var g := GridContainer.new()
